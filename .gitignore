@@ -1,0 +1,7 @@
+build*/
+out/
+in/
+perf.data*
+*.csv
+*.exr
+*.png
