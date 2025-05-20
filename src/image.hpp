@@ -63,7 +63,7 @@ struct image: noncopyable {
 
   void put_channel_data(const linear_channel& channel, std::span<const float> newdata);
 
-  void dump_pngs(std::string_view dir) const;
+  void dump_pngs_prefix(std::string_view prefix) const;
   void dump_png_rgb(const char* path) const;
 
   std::vector<unsigned char> data_to_u8() const;

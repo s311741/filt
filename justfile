@@ -10,7 +10,7 @@ alias br := build-release
 build-debug:
   cmake --build build --config Debug
 
-run IMAGE="./exr/watercolor.exr": build-release
+run IMAGE="./exr/cam7.exr": build-release
   # rm -f out/*.png
   ./build/RelWithDebInfo/filter "{{IMAGE}}"
 alias r := run

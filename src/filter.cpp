@@ -1,5 +1,6 @@
 #include "image.hpp"
 #include "util.hpp"
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdlib>
@@ -98,11 +99,7 @@ image naive_filter(const image& spectral, const image& gbuffer) {
 }
 
 [[maybe_unused]] static constexpr float approx_exp_line(float x) {
-  x = 1.f + 0.3f * x;
-  if (x < 0.f) {
-    x = 0.f;
-  }
-  return x;
+  return std::max(0.f, 1.f + 0.3f * x);
 }
 
 constexpr int radius = 3;
@@ -176,6 +173,16 @@ struct csv_dumper: nonmovable {
   }
 };
 
+constexpr static std::pair<int, int> rotate_ij(int direction, int i, int j) {
+  switch (direction) {
+    case 0: return {i, j};
+    case 1: return {j, -i};
+    case 2: return {-i, -j};
+    case 3: return {-j, i};
+  }
+  __builtin_unreachable();
+}
+
 void real_filter(image_meta& meta, filter_streams s) {
   int total_pixels = meta.total_pixels();
   assert_release(std::ssize(s.dst) == total_pixels);
@@ -203,48 +210,57 @@ void real_filter(image_meta& meta, filter_streams s) {
 
   int redzone = radius * (width + 1);
   for (int origin = redzone; origin < total_pixels - redzone; ++origin) {
-    float value = 0;
-    float weight = 0;
-
     float zorigin = z[origin];
     normal norigin = get_normal(origin);
+    float value = zorigin;
+    float weight = 1.f;
 
-    _Pragma("unroll") for (int dy = -radius; dy <= radius; ++dy) {
-      _Pragma("unroll") for (int dx = -radius; dx <= radius; ++dx) {
-        int offset = origin + dy * width + dx;
-        float zhere = z[offset];
-        normal nhere = get_normal(offset);
+    _Pragma("unroll")
+    for (int direction = 0; direction < 4; ++direction) {
+      normal nprev = norigin;
+      float ndotprev;
 
-        float gspace = std::exp((dx * dx + dy * dy) * (-1.f / (1 + 2 * radius)));
+      _Pragma("unroll")
+      for (int i = 1; i <= radius; ++i) {
+        _Pragma("unroll")
+        for (int j = -i; j < +i; ++j) {
+          auto [dx, dy] = rotate_ij(direction, i, j);
+          int offset = origin + dy * width + dx;
+          normal nhere = get_normal(offset);
 
-        float idiff = (zhere - zorigin) / zorigin;
-        float gintensity = approx_exp_line(idiff * idiff * (-1.f / 0.4f));
+          float ndot = dot(nprev, nhere);
+          constexpr float dn_threshold = 1.01f;
+          if (ndot < 0.5f
+          || (i > 1 && (ndot > ndotprev * dn_threshold || ndotprev > ndot * dn_threshold))) {
+            s.aux2[origin] += 0.25f / i;
+            goto quit_direction;
+          }
 
-        float ndot = dot(nhere, norigin);
-        float gnormal = ndot * ndot;
-        if (ndot < 0.9995) {
-          gnormal = 0.f;
+          float dist2 = i*i + j*j;
+          float gdist = std::exp(dist2 * (-1.f / (1 + 2 * radius)));
+
+          float zhere = z[offset];
+          float idiff = (zhere - zorigin);
+          float gintensity = approx_exp1(idiff * idiff * (-1.f / 10.f));
+
+          float factor = gdist * gintensity;
+          value += zhere * factor;
+          weight += factor;
+
+          if (j == 0) {
+            nprev = nhere;
+            ndotprev = ndot;
+          }
         }
-
-        float factor = gspace * gintensity * gnormal;
-        value += zhere * factor;
-        weight += factor;
       }
+
+    quit_direction:;
     }
 
-    if (weight == 0.f) [[unlikely]] {
-      s.dst[origin] = z[origin];
-    } else {
-      s.dst[origin] = value / weight;
-    }
+    s.dst[origin] = value / weight;
   }
 
-  float sum_start = std::accumulate(z.begin() + redzone, z.end() - redzone, 0.f);
-  float sum_end = std::accumulate(s.dst.begin() + redzone, s.dst.end() - redzone, 0.f);
-  log_out("{} -> {}", sum_start, sum_end);
-
   for (int i = 0; i < total_pixels; ++i) {
-    s.aux2[i] = s.dst[i] / 10.f;
     s.dst[i] *= s.albedo[i];
   }
 }

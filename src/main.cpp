@@ -98,7 +98,7 @@ int main(int argc, char** argv) try {
 
   auto result_image = filt::image(gbuf.meta);
   auto z_image = filt::image(gbuf.meta);
-  auto fz_image = filt::image(gbuf.meta);
+  auto aux_image = filt::image(gbuf.meta);
 
   for (int ci = 0; ci < 3; ++ci) {
     auto timer = interval_timer("filtering");
@@ -119,14 +119,18 @@ int main(int argc, char** argv) try {
 
     for (float& f: aux_mem) { f /= 10.f; }
     z_image.put_channel_data(z_image.meta.find_channel(target_name), aux_mem);
-    fz_image.put_channel_data(fz_image.meta.find_channel(target_name), aux2_mem);
+    aux_image.put_channel_data(aux_image.meta.find_channel(target_name), aux2_mem);
   }
 
   std::function<void()> tasks[] = {
     [&] { result_image.dump_png_rgb("out/out.png"); },
     [&] { gbuf.dump_png_rgb("out/in.png"); },
     [&] { z_image.dump_png_rgb("out/z.png"); },
-    [&] { fz_image.dump_png_rgb("out/fz.png"); },
+    [&] {
+      remove_non_rgb_channels(aux_image.meta);
+      // fz_image.dump_png_rgb("out/fz.png");
+      aux_image.dump_pngs_prefix("out/aux-");
+    },
   };
   tbb::parallel_for_each(tasks, [](auto& task) {task();});
 

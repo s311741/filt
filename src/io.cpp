@@ -186,7 +186,7 @@ static uint8_t clamp_float_value(float f) {
   return std::clamp(f, 0.f, 1.0f) * 255.f;
 }
 
-void image::dump_pngs(std::string_view dir) const {
+void image::dump_pngs_prefix(std::string_view prefix) const {
   std::vector<unsigned char> all_data(data.size());
   for (int i = 0; i < std::ssize(data); ++i) {
     all_data[i] = clamp_float_value(data[i]);
@@ -202,7 +202,7 @@ void image::dump_pngs(std::string_view dir) const {
           + channel.base_offset_elems()
           + i * channel.stride_y_elems();
       }
-      auto filename = fmt::format("{}/{}.png", dir, channel.name);
+      auto filename = fmt::format("{}{}.png", prefix, channel.name);
       png_writer(filename.c_str()).write_grayscale(meta.width, rows);
       log_out("Done writing gray image {} on cpu {}", filename, sched_getcpu());
     });
