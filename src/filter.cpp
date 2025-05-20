@@ -136,6 +136,7 @@ struct kernel {
 
 using normal = std::array<float, 3>;
 
+#if 0
 constexpr static float normaldiff(const normal& a, const normal& b) {
   // float x = a[1] * b[2] - a[2] * b[1];
   // float y = a[2] * b[0] - a[0] * b[2];
@@ -146,12 +147,13 @@ constexpr static float normaldiff(const normal& a, const normal& b) {
   float z = a[2] - b[2];
   return std::abs(x) + std::abs(y) + std::abs(z);
 }
+#endif
 
 constexpr static float dot(const normal& a, const normal& b) {
   return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 }
 
-struct csv_dumper {
+struct csv_dumper: nonmovable {
   std::ofstream csv = std::ofstream("hist.csv");
   double probability = 1e-2;
   std::uniform_real_distribution<double> dist;
@@ -218,11 +220,11 @@ void real_filter(image_meta& meta, filter_streams s) {
         float idiff = (zhere - zorigin) / zorigin;
         float gintensity = approx_exp_line(idiff * idiff * (-1.f / 0.4f));
 
-        float ndot = std::max(0.f, dot(nhere, norigin));
+        float ndot = dot(nhere, norigin);
         float gnormal = ndot * ndot;
-
-        // float ndiff = normaldiff(nhere, norigin);
-        // float gnormal = approx_exp1(-ndiff * (-1.f / 10.f));
+        if (ndot < 0.9995) {
+          gnormal = 0.f;
+        }
 
         float factor = gspace * gintensity * gnormal;
         value += zhere * factor;
@@ -237,14 +239,14 @@ void real_filter(image_meta& meta, filter_streams s) {
     }
   }
 
+  float sum_start = std::accumulate(z.begin() + redzone, z.end() - redzone, 0.f);
+  float sum_end = std::accumulate(s.dst.begin() + redzone, s.dst.end() - redzone, 0.f);
+  log_out("{} -> {}", sum_start, sum_end);
+
   for (int i = 0; i < total_pixels; ++i) {
     s.aux2[i] = s.dst[i] / 10.f;
     s.dst[i] *= s.albedo[i];
   }
-
-  float sum_start = std::accumulate(s.color.begin() + redzone, s.color.end() - redzone, 0.f);
-  float sum_end = std::accumulate(s.dst.begin() + redzone, s.dst.end() - redzone, 0.f);
-  log_out("{} -> {}", sum_start, sum_end);
 }
 
 }  // namespace filt
