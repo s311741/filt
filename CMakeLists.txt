@@ -6,7 +6,6 @@ find_package(OpenEXR REQUIRED)
 find_package(PNG REQUIRED)
 find_package(TBB REQUIRED)
 find_package(Boost CONFIG REQUIRED COMPONENTS container)
-find_package(benchmark REQUIRED)
 
 set(CMAKE_CXX_STANDARD 23)
 
@@ -27,10 +26,3 @@ target_link_libraries(
 
 add_executable(filter src/main.cpp)
 target_link_libraries(filter PRIVATE filtlib)
-
-add_executable(bench src/bench.cpp)
-target_link_libraries(
-  bench PRIVATE
-  filtlib
-  benchmark::benchmark
-)

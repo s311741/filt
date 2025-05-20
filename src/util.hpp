@@ -45,24 +45,29 @@ struct nonmovable {
   nonmovable& operator=(nonmovable&&) = delete;
 };
 
+using dmicroseconds = std::chrono::duration<double, std::micro>;
+using dseconds = std::chrono::duration<double, std::ratio<1>>;
+
 struct interval_timer {
   using clock = std::chrono::steady_clock;
+
   clock::time_point time_started = clock::now();
   int cpu_started = sched_getcpu();
   std::string_view name;
 
   explicit interval_timer(std::string_view n = ""): name(n) {}
 
-  void report() const {
-    using dmicroseconds = std::chrono::duration<double, std::micro>;
+  dmicroseconds elapsed() const {
+    return std::chrono::duration_cast<dmicroseconds>(clock::now() - time_started);
+  }
 
-    clock::time_point now = clock::now();
+  void report() const {
     int cpu = sched_getcpu();
-    auto elapsed = std::chrono::duration_cast<dmicroseconds>(now - time_started);
+    auto dt = elapsed();
     fmt::print(
       stderr, fg(fmt::terminal_color::bright_green),
       "Timer '{}': time {:.3f}us, cpu {}->{}\n",
-      name, elapsed.count(), cpu_started, cpu);
+      name, dt.count(), cpu_started, cpu);
   }
 };
 
@@ -75,6 +80,6 @@ std::span<T, 1> span1(T& t) {
   do { \
     if (!(expr)) [[unlikely]] { \
       fmt::println(stderr, "{}:{} assert: {}", __FILE__, __LINE__, #expr); \
-      std::exit(1); \
+      /*std::exit(1);*/ __builtin_trap(); \
     } \
   } while (false)

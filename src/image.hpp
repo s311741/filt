@@ -9,7 +9,14 @@
 #include <vector>
 #include <boost/container/small_vector.hpp>
 
+
 namespace filt {
+
+// #define BLOCKS
+constexpr int block_shift = 2;
+constexpr int block_size = 1 << block_shift;
+constexpr unsigned block_mask = block_size - 1;
+constexpr int block_area = block_size * block_size;
 
 using boost::container::small_vector;
 
@@ -62,11 +69,13 @@ struct image: noncopyable {
   {}
 
   void put_channel_data(const linear_channel& channel, std::span<const float> newdata);
+  std::span<float> get_channel_data(const linear_channel& channel);
 
   void dump_pngs_prefix(std::string_view prefix) const;
   void dump_png_rgb(const char* path) const;
 
   std::vector<unsigned char> data_to_u8() const;
+  void unpack_all_channels();
 };
 
 [[nodiscard]] image naive_filter(const image& spectral, const image& gbuffer);
@@ -79,6 +88,13 @@ struct filter_streams {
   std::span<float> aux;
   std::span<float> aux2;
 };
-void real_filter(image_meta& meta, filter_streams streams);
+void linear_filter(image_meta& meta, filter_streams streams);
+
+
+void repack_to_block(int width, std::span<float> dst, std::span<const float> src);
+void unpack_from_block(int width, std::span<float> dst, std::span<const float> src);
+
+void repack_to_block_inplace(int width, std::span<float>);
+void unpack_from_block_inplace(int width, std::span<float>);
 
 }  // namespace filt

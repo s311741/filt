@@ -44,6 +44,7 @@ struct perf_scope: nonmovable {
   }
 };
 
+[[maybe_unused]]
 static void remove_non_rgb_channels(filt::image_meta& meta) {
    meta.channels.erase(
     std::remove_if(
@@ -98,11 +99,13 @@ int main(int argc, char** argv) try {
 
   auto result_image = filt::image(gbuf.meta);
   auto z_image = filt::image(gbuf.meta);
-  auto aux_image = filt::image(gbuf.meta);
+  auto zf_image = filt::image(gbuf.meta);
 
   for (int ci = 0; ci < 3; ++ci) {
+    std::ranges::fill(aux2_mem, 0.f);
+
     auto timer = interval_timer("filtering");
-    filt::real_filter(gbuf.meta, filt::filter_streams {
+    filt::linear_filter(gbuf.meta, filt::filter_streams {
       .dst = dst_mem,
       .color = color_mem[ci],
       .albedo = albedo_mem[ci],
@@ -110,27 +113,46 @@ int main(int argc, char** argv) try {
       .aux = aux_mem,
       .aux2 = aux2_mem,
     });
-    timer.report();
+    auto dt = timer.elapsed();
+    log_out(
+      "{:.3f}us - {:.3f} Mp/s",
+      dt.count(), gbuf.meta.total_pixels() / dt.count());
 
     char target_name[2] = { "RGB"[ci], 0 };
     result_image.put_channel_data(
       result_image.meta.find_channel(target_name),
       dst_mem);
-
+    zf_image.put_channel_data(
+      zf_image.meta.find_channel(target_name),
+      aux2_mem);
+    // drops_image.put_channel_data(
+    //   drops_image.meta.find_channel(target_name),
+    //   aux2_mem);
     for (float& f: aux_mem) { f /= 10.f; }
     z_image.put_channel_data(z_image.meta.find_channel(target_name), aux_mem);
-    aux_image.put_channel_data(aux_image.meta.find_channel(target_name), aux2_mem);
   }
 
   std::function<void()> tasks[] = {
-    [&] { result_image.dump_png_rgb("out/out.png"); },
-    [&] { gbuf.dump_png_rgb("out/in.png"); },
-    [&] { z_image.dump_png_rgb("out/z.png"); },
     [&] {
-      remove_non_rgb_channels(aux_image.meta);
-      // fz_image.dump_png_rgb("out/fz.png");
-      aux_image.dump_pngs_prefix("out/aux-");
+      gbuf.unpack_all_channels();
+      gbuf.dump_png_rgb("out/in.png");
     },
+    [&] {
+      result_image.unpack_all_channels();
+      result_image.dump_png_rgb("out/out.png");
+    },
+    [&] {
+      z_image.unpack_all_channels();
+      z_image.dump_png_rgb("out/z.png");
+    },
+    [&] {
+      zf_image.unpack_all_channels();
+      zf_image.dump_png_rgb("out/zf.png");
+    },
+    // [&] {
+    //   remove_non_rgb_channels(drops_image.meta);
+    //   drops_image.dump_pngs_prefix("out/drops-");
+    // },
   };
   tbb::parallel_for_each(tasks, [](auto& task) {task();});
 

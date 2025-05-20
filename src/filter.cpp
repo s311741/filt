@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
-#include <numeric>
 #include <oneapi/tbb/parallel_for_each.h>
 #include <random>
 #include <sched.h>
@@ -36,54 +35,6 @@ int linear_channel::offset_elems(int x, int y) const {
     + y * stride_y_elems();
 }
 
-static void touch(const float* ptr) {
-  *static_cast<const volatile float*>(ptr);
-}
-
-[[gnu::noinline]]
-static void naive_filter_channel(
-  const image_meta& meta,
-  const linear_channel& channel,
-  std::span<float> dst,
-  std::span<const float> src,
-  std::span<const float> gbuffer
-) {
-  (void) gbuffer;
-  constexpr int radius = 1;
-
-  for (int y = radius; y + radius < meta.height; ++y) {
-    for (int x = radius; x + radius < meta.width; ++x) {
-      int off = channel.offset_elems(x, y);
-      touch(&src[off]);
-      touch(&dst[off]);
-      // touch(&gbuffer[off]);
-    }
-  }
-}
-
-image naive_filter(const image& spectral, const image& gbuffer) {
-  assert(spectral.meta.height == gbuffer.meta.height
-      && spectral.meta.width == gbuffer.meta.width);
-
-  image result(spectral.meta);
-
-  // tbb::parallel_for_each
-  std::for_each
-  (
-    spectral.meta.channels.begin(), spectral.meta.channels.end(),
-    [&](const linear_channel& channel) {
-      auto timer = interval_timer("filtering");
-      naive_filter_channel(
-        result.meta, channel, result.data,
-        spectral.data, gbuffer.data);
-      timer.report();
-    }
-  );
-
-  return result;
-}
-
-
 [[maybe_unused]] static constexpr float approx_exp1(float x) {
   constexpr float a = (1 << 23) / 0.69314718f;
   constexpr float b = (1 << 23) * (127 - 0.043677448f);
@@ -103,48 +54,8 @@ image naive_filter(const image& spectral, const image& gbuffer) {
 }
 
 constexpr int radius = 3;
-constexpr int side = 1 + 2 * radius;
-
-struct kernel {
-  float values[side][side] = {};
-
-  constexpr float sample(int dx, int dy) const {
-    return values[dx + radius][dy + radius];
-  }
-
-  constexpr static kernel gaussian(float factor) {
-    kernel result;
-    float total = 0;
-    for (int dy = -radius; dy <= radius; ++dy) {
-      for (int dx = -radius; dx <= radius; ++dx) {
-        float g = approx_exp1((dx * dx + dy * dy) * factor);
-        result.values[dx + radius][dy + radius] = g;
-        total += g;
-      }
-    }
-    for (int i = 0; i < side; ++i) {
-      for (int j = 0; j < side; ++j) {
-        result.values[i][j] /= total;
-      }
-    }
-    return result;
-  }
-};
 
 using normal = std::array<float, 3>;
-
-#if 0
-constexpr static float normaldiff(const normal& a, const normal& b) {
-  // float x = a[1] * b[2] - a[2] * b[1];
-  // float y = a[2] * b[0] - a[0] * b[2];
-  // float z = a[0] * b[1] - a[1] * b[0];
-  // return x * x + y * y + z * z;
-  float x = a[0] - b[0];
-  float y = a[1] - b[1];
-  float z = a[2] - b[2];
-  return std::abs(x) + std::abs(y) + std::abs(z);
-}
-#endif
 
 constexpr static float dot(const normal& a, const normal& b) {
   return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
@@ -175,40 +86,79 @@ struct csv_dumper: nonmovable {
 
 constexpr static std::pair<int, int> rotate_ij(int direction, int i, int j) {
   switch (direction) {
-    case 0: return {i, j};
-    case 1: return {j, -i};
-    case 2: return {-i, -j};
-    case 3: return {-j, i};
+    case 0: return {i, j};   // down
+    case 1: return {j, -i};  // left
+    case 2: return {-i, -j}; // up
+    case 3: return {-j, i};  // right
   }
   __builtin_unreachable();
 }
 
-void real_filter(image_meta& meta, filter_streams s) {
+static int shift_origin(int origin, int width, int dx, int dy) {
+#ifdef BLOCKS
+  int cell_x = origin & block_mask;
+  int cell_y = (origin >> block_shift) & block_mask;
+  int block_id = origin >> (2 * block_shift);
+
+  cell_x += dx;
+  cell_y += dy;
+
+  if (cell_x < 0) {
+    --block_id;
+  } else if (cell_x >= block_size) {
+    ++block_id;
+  }
+
+  if (cell_y < 0) {
+    block_id -= width / block_size;
+  } else if (cell_y >= block_size) {
+    block_id += width / block_size;
+  }
+
+  cell_x &= block_mask;
+  cell_y &= block_mask;
+  return (block_id << (2 * block_shift)) | (cell_y << block_shift) | cell_x;
+#else
+  return origin + dy * width + dx;
+#endif
+}
+
+void linear_filter(image_meta& meta, filter_streams s) {
   int total_pixels = meta.total_pixels();
   assert_release(std::ssize(s.dst) == total_pixels);
   assert_release(std::ssize(s.color) == total_pixels);
   assert_release(std::ssize(s.albedo) == total_pixels);
   assert_release(std::ssize(s.aux) == total_pixels);
-  assert_release(std::ssize(s.aux2) == total_pixels);
   assert_release(std::ssize(s.interleaved_normals) == 3 * total_pixels);
 
   const int width = meta.width;
+
+  float* __restrict z = s.aux.data();
+  float* __restrict out = s.dst.data();
+  const float* __restrict normals = s.interleaved_normals.data();
 
   auto get_normal = [&](int origin) -> normal {
     normal result;
     std::memcpy(
       result.data(),
-      s.interleaved_normals.data() + 3 * origin,
+      normals + 3 * origin,
       sizeof(result));
     return result;
   };
 
-  auto z = s.aux;
   for (int i = 0; i < total_pixels; ++i) {
     z[i] = s.color[i] / s.albedo[i];
   }
 
+#ifdef BLOCKS
+  int redzone = block_size * (width + 1);
+  if (redzone % 16 != 0) {
+    __builtin_unreachable();
+  }
+#else
   int redzone = radius * (width + 1);
+#endif
+
   for (int origin = redzone; origin < total_pixels - redzone; ++origin) {
     float zorigin = z[origin];
     normal norigin = get_normal(origin);
@@ -225,23 +175,22 @@ void real_filter(image_meta& meta, filter_streams s) {
         _Pragma("unroll")
         for (int j = -i; j < +i; ++j) {
           auto [dx, dy] = rotate_ij(direction, i, j);
-          int offset = origin + dy * width + dx;
+          int offset = shift_origin(origin, width, dx, dy);;
+
           normal nhere = get_normal(offset);
 
           float ndot = dot(nprev, nhere);
-          constexpr float dn_threshold = 1.01f;
-          if (ndot < 0.5f
-          || (i > 1 && (ndot > ndotprev * dn_threshold || ndotprev > ndot * dn_threshold))) {
-            s.aux2[origin] += 0.25f / i;
+          constexpr float threshold = 1.01f;
+          if (ndot < 0.7f
+          || (i > 1 && (ndot > ndotprev * threshold || ndotprev > ndot * threshold))) {
             goto quit_direction;
           }
 
-          float dist2 = i*i + j*j;
-          float gdist = std::exp(dist2 * (-1.f / (1 + 2 * radius)));
+          float gdist = std::exp((i*i + j*j) * (-1.f / (1 + 2 * radius)));
 
           float zhere = z[offset];
           float idiff = (zhere - zorigin);
-          float gintensity = approx_exp1(idiff * idiff * (-1.f / 10.f));
+          float gintensity = approx_exp1(idiff * idiff * (-1.f / 25.f));
 
           float factor = gdist * gintensity;
           value += zhere * factor;
@@ -257,12 +206,15 @@ void real_filter(image_meta& meta, filter_streams s) {
     quit_direction:;
     }
 
-    s.dst[origin] = value / weight;
+    float alb = s.albedo[origin];
+    float final = alb * value / weight;
+    out[origin] = final;
   }
 
-  for (int i = 0; i < total_pixels; ++i) {
-    s.dst[i] *= s.albedo[i];
-  }
+  // for (int i = 0; i < total_pixels; ++i) {
+  //   // s.aux2[i] = s.dst[i] / 10.f;
+  //   s.dst[i] *= s.albedo[i];
+  // }
 }
 
 }  // namespace filt

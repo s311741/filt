@@ -17,6 +17,9 @@ struct memory_pool: nonmovable {
 
   template<typename T>
   [[nodiscard]] std::span<T> allocate(int offset_bytes, int size_elems) {
+#if 0
+    offset_bytes = 0;
+#endif
     assert_release(offset_bytes % sizeof(T) == 0);
     int size_bytes = size_elems * sizeof(T);
     int size_pages = (size_elems * sizeof(T) + offset_bytes + 4095) / 4096;
