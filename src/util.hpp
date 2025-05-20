@@ -3,10 +3,12 @@
 #include <fmt/base.h>
 #include <fmt/color.h>
 #include <fmt/format.h>
+#include <random>
 #include <sched.h>
 #include <stdexcept>
 #include <system_error>
 #include <unistd.h>
+#include <fstream>
 
 void set_affinity(int from, int upto);
 
@@ -83,3 +85,27 @@ std::span<T, 1> span1(T& t) {
       /*std::exit(1);*/ __builtin_trap(); \
     } \
   } while (false)
+
+
+struct csv_dumper: nonmovable {
+  std::ofstream csv = std::ofstream("hist.csv");
+  double probability = 1e-2;
+  std::uniform_real_distribution<double> dist;
+  std::mt19937_64 rng;
+
+  explicit csv_dumper(const char* name, double prob):
+    csv(name),
+    probability(prob),
+    dist(0., 1.),
+    rng(std::random_device()())
+  {}
+
+  template<typename First, typename... Rest>
+  void report(First&& first, Rest&&... rest) {
+    if (dist(rng) < probability) {
+      csv << std::forward<First>(first);
+      ((csv << "," << std::forward<Rest>(rest)), ...);
+      csv << '\n';
+    }
+  }
+};

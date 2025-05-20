@@ -169,12 +169,6 @@ image::image(
   exr.setFrameBuffer(framebuffer);
   exr.readPixels(0, meta.height-1);
 
-#ifdef BLOCKS
-  for (const linear_channel& channel: meta.channels) {
-    repack_to_block_inplace(meta.width, get_channel_data(channel));
-  }
-#endif
-
   log_out("Done reading image {}", exr_filename);
 }
 
@@ -250,56 +244,6 @@ void image::dump_png_rgb(const char* path) const {
   }
   png_writer(path).write_rgb_interleaved(meta.width, rows);
   log_out("Done writing rgb image {} on cpu {}", path, sched_getcpu());
-}
-
-void image::unpack_all_channels() {
-#ifdef BLOCKS
-  for (auto& c: meta.channels) {
-    unpack_from_block_inplace(meta.width, get_channel_data(c));
-  }
-#endif
-}
-
-enum class pack_op { linear_to_block, block_to_linear };
-template<pack_op which_way>
-static void do_block_pack(int width, std::span<float> dst, std::span<const float> src) {
-  assert_release(dst.size() == src.size());
-  assert_release(width % block_size == 0);
-  assert_release(src.size() % width == 0);
-  int height = std::ssize(src) / width;
-  assert_release(height % block_size == 0);
-
-  for (int i = 0; i < std::ssize(src); ++i) {
-    int cell_x = i & block_mask;
-    int cell_y = (i >> block_shift) & block_mask;
-    int block_id = i / (block_size * block_size);
-    int block_y = block_id / (width / block_size);
-    int block_x = block_id % (width / block_size);
-    int j = width * (block_size * block_y + cell_y) + block_size * block_x + cell_x;
-    if constexpr (which_way == pack_op::linear_to_block) {
-      dst[i] = src[j];
-    } else {
-      dst[j] = src[i];
-    }
-  }
-}
-
-void repack_to_block(int width, std::span<float> dst, std::span<const float> src) {
-  do_block_pack<pack_op::linear_to_block>(width, dst, src);
-}
-
-void unpack_from_block(int width, std::span<float> dst, std::span<const float> src) {
-  do_block_pack<pack_op::block_to_linear>(width, dst, src);
-}
-
-void repack_to_block_inplace(int width, std::span<float> data) {
-  const std::vector<float> v(data.begin(), data.end());
-  repack_to_block(width, data, v);
-}
-
-void unpack_from_block_inplace(int width, std::span<float> data) {
-  const std::vector<float> v(data.begin(), data.end());
-  unpack_from_block(width, data, v);
 }
 
 }  // namespace filt

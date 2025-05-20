@@ -93,6 +93,11 @@ int main(int argc, char** argv) try {
   }
   auto normal_mem = pool.upload_channels_interleave(128, gbuf, normal_channels);
 
+  std::vector<int8_t> normal_mem_compressed(normal_mem.size());
+  for (int i = 0; i < std::ssize(normal_mem); ++i) {
+    normal_mem_compressed[i] = normal_mem[i] * 127.f;
+  }
+
   auto dst_mem = pool.allocate<float>(192, gbuf.meta.total_pixels());
   auto aux_mem = pool.allocate<float>(0, gbuf.meta.total_pixels());
   auto aux2_mem = pool.allocate<float>(0, gbuf.meta.total_pixels());
@@ -133,22 +138,10 @@ int main(int argc, char** argv) try {
   }
 
   std::function<void()> tasks[] = {
-    [&] {
-      gbuf.unpack_all_channels();
-      gbuf.dump_png_rgb("out/in.png");
-    },
-    [&] {
-      result_image.unpack_all_channels();
-      result_image.dump_png_rgb("out/out.png");
-    },
-    [&] {
-      z_image.unpack_all_channels();
-      z_image.dump_png_rgb("out/z.png");
-    },
-    [&] {
-      zf_image.unpack_all_channels();
-      zf_image.dump_png_rgb("out/zf.png");
-    },
+    [&] { gbuf.dump_png_rgb("out/in.png"); },
+    [&] { result_image.dump_png_rgb("out/out.png"); },
+    [&] { z_image.dump_png_rgb("out/z.png"); },
+    [&] { zf_image.dump_png_rgb("out/zf.png"); },
     // [&] {
     //   remove_non_rgb_channels(drops_image.meta);
     //   drops_image.dump_pngs_prefix("out/drops-");

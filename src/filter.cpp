@@ -3,14 +3,13 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <oneapi/tbb/parallel_for_each.h>
-#include <random>
 #include <sched.h>
 #include <span>
-#include <fstream>
 
 namespace filt {
 
@@ -55,34 +54,21 @@ int linear_channel::offset_elems(int x, int y) const {
 
 constexpr int radius = 3;
 
+using short_normal = std::array<int8_t, 3>;
 using normal = std::array<float, 3>;
+
+constexpr static float dot(const short_normal& a, const short_normal& b) {
+  float result = 0.f;
+  for (int i = 0; i < 3; ++i) {
+    auto w = a[i] * b[i];
+    result += 1.f/(127.f * 127.f) * w;
+  }
+  return result;
+}
 
 constexpr static float dot(const normal& a, const normal& b) {
   return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 }
-
-struct csv_dumper: nonmovable {
-  std::ofstream csv = std::ofstream("hist.csv");
-  double probability = 1e-2;
-  std::uniform_real_distribution<double> dist;
-  std::mt19937_64 rng;
-
-  explicit csv_dumper(const char* name, double prob):
-    csv(name),
-    probability(prob),
-    dist(0., 1.),
-    rng(std::random_device()())
-  {}
-
-  template<typename First, typename... Rest>
-  void report(First&& first, Rest&&... rest) {
-    if (dist(rng) < probability) {
-      csv << std::forward<First>(first);
-      ((csv << "," << std::forward<Rest>(rest)), ...);
-      csv << '\n';
-    }
-  }
-};
 
 constexpr static std::pair<int, int> rotate_ij(int direction, int i, int j) {
   switch (direction) {
@@ -95,32 +81,7 @@ constexpr static std::pair<int, int> rotate_ij(int direction, int i, int j) {
 }
 
 static int shift_origin(int origin, int width, int dx, int dy) {
-#ifdef BLOCKS
-  int cell_x = origin & block_mask;
-  int cell_y = (origin >> block_shift) & block_mask;
-  int block_id = origin >> (2 * block_shift);
-
-  cell_x += dx;
-  cell_y += dy;
-
-  if (cell_x < 0) {
-    --block_id;
-  } else if (cell_x >= block_size) {
-    ++block_id;
-  }
-
-  if (cell_y < 0) {
-    block_id -= width / block_size;
-  } else if (cell_y >= block_size) {
-    block_id += width / block_size;
-  }
-
-  cell_x &= block_mask;
-  cell_y &= block_mask;
-  return (block_id << (2 * block_shift)) | (cell_y << block_shift) | cell_x;
-#else
   return origin + dy * width + dx;
-#endif
 }
 
 void linear_filter(image_meta& meta, filter_streams s) {
@@ -150,14 +111,7 @@ void linear_filter(image_meta& meta, filter_streams s) {
     z[i] = s.color[i] / s.albedo[i];
   }
 
-#ifdef BLOCKS
-  int redzone = block_size * (width + 1);
-  if (redzone % 16 != 0) {
-    __builtin_unreachable();
-  }
-#else
   int redzone = radius * (width + 1);
-#endif
 
   for (int origin = redzone; origin < total_pixels - redzone; ++origin) {
     float zorigin = z[origin];
