@@ -98,12 +98,12 @@ struct image: noncopyable {
 [[nodiscard]] image naive_filter(image& gbuffer);
 
 struct filter_streams {
+  // all interleaved 1,2,3,1,2,3,..
   std::span<float> dst;
   std::span<const float> color;
   std::span<const float> albedo;
-  std::span<const float> interleaved_normals;
-  std::span<float> aux;
-  std::span<float> aux2;
+  std::span<const float> normals;
+  std::span<float> z;
 };
 void linear_filter(image_meta& meta, filter_streams streams);
 

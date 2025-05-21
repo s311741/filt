@@ -38,8 +38,9 @@ int main(int argc, char** argv) try {
 
   auto gbuf = filt::image(argv[1]);
 
+#if 0
   {
-    auto timer = interval_timer("filter");
+    auto timer = interval_timer();
     auto result = filt::naive_filter(gbuf);
     auto dt = timer.elapsed();
     log_out(
@@ -48,6 +49,7 @@ int main(int argc, char** argv) try {
     result.dump_png_rgb("out/naive.png");
     return 0;
   }
+#endif
 
   filt::linear_channel color_channels[3] = {
     gbuf.meta.find_channel("R"),
@@ -66,69 +68,29 @@ int main(int argc, char** argv) try {
   };
 
   auto pool = filt::memory_pool();
-  std::span<float> color_mem[3];
-  std::span<float> albedo_mem[3];
-  for (int i = 0; i < 3; ++i) {
-    color_mem[i] = pool.upload_channel(0, gbuf, color_channels[i]);
-    albedo_mem[i] = pool.upload_channel(64, gbuf, albedo_channels[i]);
-  }
+
+  auto color_mem = pool.upload_channels_interleave(0, gbuf, color_channels);
+  auto albedo_mem = pool.upload_channels_interleave(0, gbuf, albedo_channels);
   auto normal_mem = pool.upload_channels_interleave(128, gbuf, normal_channels);
 
-  std::vector<int8_t> normal_mem_compressed(normal_mem.size());
-  for (int i = 0; i < std::ssize(normal_mem); ++i) {
-    normal_mem_compressed[i] = normal_mem[i] * 127.f;
-  }
-
-  auto dst_mem = pool.allocate<float>(192, gbuf.meta.total_pixels());
-  auto aux_mem = pool.allocate<float>(0, gbuf.meta.total_pixels());
-  auto aux2_mem = pool.allocate<float>(0, gbuf.meta.total_pixels());
+  auto dst_mem = pool.allocate<float>(192, 3 * gbuf.meta.total_pixels());
+  auto z_mem = pool.allocate<float>(0, 3 * gbuf.meta.total_pixels());
 
   auto result_image = filt::image(gbuf.meta);
   auto z_image = filt::image(gbuf.meta);
   auto zf_image = filt::image(gbuf.meta);
 
-  for (int ci = 0; ci < 3; ++ci) {
-    std::ranges::fill(aux2_mem, 0.f);
-
-    auto timer = interval_timer("filtering");
-    filt::linear_filter(gbuf.meta, filt::filter_streams {
+  for (int i = 0; i < 10; ++i) {
+    auto timer = interval_timer();
+    filt::linear_filter(gbuf.meta, filt::filter_streams{
       .dst = dst_mem,
-      .color = color_mem[ci],
-      .albedo = albedo_mem[ci],
-      .interleaved_normals = normal_mem,
-      .aux = aux_mem,
-      .aux2 = aux2_mem,
+      .color = color_mem,
+      .albedo = albedo_mem,
+      .normals = normal_mem,
+      .z = z_mem,
     });
-    auto dt = timer.elapsed();
-    log_out(
-      "{:.3f}us - {:.3f} Mp/s",
-      dt.count(), gbuf.meta.total_pixels() / dt.count());
-
-    char target_name[2] = { "RGB"[ci], 0 };
-    result_image.put_channel_data(
-      result_image.meta.find_channel(target_name),
-      dst_mem);
-    zf_image.put_channel_data(
-      zf_image.meta.find_channel(target_name),
-      aux2_mem);
-    // drops_image.put_channel_data(
-    //   drops_image.meta.find_channel(target_name),
-    //   aux2_mem);
-    for (float& f: aux_mem) { f /= 10.f; }
-    z_image.put_channel_data(z_image.meta.find_channel(target_name), aux_mem);
+    timer.report(gbuf.meta.total_pixels());
   }
-
-  std::function<void()> tasks[] = {
-    [&] { gbuf.dump_png_rgb("out/in.png"); },
-    [&] { result_image.dump_png_rgb("out/out.png"); },
-    [&] { z_image.dump_png_rgb("out/z.png"); },
-    [&] { zf_image.dump_png_rgb("out/zf.png"); },
-    // [&] {
-    //   remove_non_rgb_channels(drops_image.meta);
-    //   drops_image.dump_pngs_prefix("out/drops-");
-    // },
-  };
-  tbb::parallel_for_each(tasks, [](auto& task) {task();});
 
 } catch (const std::exception& ex) {
   fmt::print(

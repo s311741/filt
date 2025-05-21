@@ -51,24 +51,17 @@ using dmicroseconds = std::chrono::duration<double, std::micro>;
 
 struct interval_timer {
   using clock = std::chrono::steady_clock;
-
   clock::time_point time_started = clock::now();
-  int cpu_started = sched_getcpu();
-  std::string_view name;
-
-  explicit interval_timer(std::string_view n = ""): name(n) {}
 
   dmicroseconds elapsed() const {
     return std::chrono::duration_cast<dmicroseconds>(clock::now() - time_started);
   }
 
-  void report() const {
-    int cpu = sched_getcpu();
+  void report(int total_pixels) const {
     auto dt = elapsed();
     fmt::print(
-      stderr, fg(fmt::terminal_color::bright_green),
-      "Timer '{}': time {:.3f}us, cpu {}->{}\n",
-      name, dt.count(), cpu_started, cpu);
+      "{:.3f}us & {:.3f} Mp/s\n",
+      dt.count(), total_pixels / dt.count());
   }
 };
 
