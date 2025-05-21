@@ -14,36 +14,6 @@
 #include <string_view>
 #include <unistd.h>
 
-struct perf_scope: nonmovable {
-  int child_pid;
-
-  perf_scope() {
-    int my_pid = getpid();
-    child_pid = fork();
-    if (child_pid == -1) {
-      throw errno_error("fork");
-    }
-
-    if (child_pid == 0) {
-      constexpr std::string_view events[] = {
-        "L1-dcache-load-misses",
-        "L1-dcache-loads",
-        "LLC-load-misses",
-        "LLC-loads",
-      };
-      auto cmdline = fmt::format("exec perf stat -p {} -e {}", my_pid, fmt::join(events, ","));
-      execl("/bin/sh", "sh", "-c", cmdline.c_str(), nullptr);
-      throw errno_error("execl");
-    }
-
-    setpgid(child_pid, 0);
-  }
-
-  ~perf_scope() {
-    kill(-child_pid, SIGINT);
-  }
-};
-
 [[maybe_unused]]
 static void remove_non_rgb_channels(filt::image_meta& meta) {
    meta.channels.erase(
@@ -66,8 +36,18 @@ int main(int argc, char** argv) try {
     throw std::runtime_error("No input image filename");
   }
 
-  auto pool = filt::memory_pool();
   auto gbuf = filt::image(argv[1]);
+
+  {
+    auto timer = interval_timer("filter");
+    auto result = filt::naive_filter(gbuf);
+    auto dt = timer.elapsed();
+    log_out(
+      "{:.3f}us & {:.3f} Mp/s",
+      dt.count(), gbuf.meta.total_pixels() / dt.count());
+    result.dump_png_rgb("out/naive.png");
+    return 0;
+  }
 
   filt::linear_channel color_channels[3] = {
     gbuf.meta.find_channel("R"),
@@ -85,6 +65,7 @@ int main(int argc, char** argv) try {
     gbuf.meta.find_channel("Ns.Z"),
   };
 
+  auto pool = filt::memory_pool();
   std::span<float> color_mem[3];
   std::span<float> albedo_mem[3];
   for (int i = 0; i < 3; ++i) {

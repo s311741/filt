@@ -48,7 +48,6 @@ struct nonmovable {
 };
 
 using dmicroseconds = std::chrono::duration<double, std::micro>;
-using dseconds = std::chrono::duration<double, std::ratio<1>>;
 
 struct interval_timer {
   using clock = std::chrono::steady_clock;

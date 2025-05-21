@@ -22,10 +22,26 @@ struct linear_channel {
   int stride_x_bytes;
   int stride_y_bytes;
 
-  int base_offset_elems() const;
-  int stride_x_elems() const;
-  int stride_y_elems() const;
-  int offset_elems(int x, int y) const;
+  int base_offset_elems() const {
+    assert(base_offset_bytes % elem_width_bytes == 0);
+    return base_offset_bytes / elem_width_bytes;
+  }
+
+  int stride_x_elems() const {
+    assert(stride_x_bytes % elem_width_bytes == 0);
+    return stride_x_bytes / elem_width_bytes;
+  }
+
+  int stride_y_elems() const {
+    assert(stride_y_bytes % elem_width_bytes == 0);
+    return stride_y_bytes / elem_width_bytes;
+  }
+
+  int offset_elems(int x, int y) const {
+    return base_offset_elems()
+        + x * stride_x_elems()
+        + y * stride_y_elems();
+  }
 };
 
 struct image_meta {
@@ -62,6 +78,14 @@ struct image: noncopyable {
     data(meta.storage_size())
   {}
 
+  float sample(const linear_channel& channel, int x, int y) const {
+    return data[channel.offset_elems(x, y)];
+  }
+
+  float sample(int channel_idx, int x, int y) const {
+    return sample(meta.channels[channel_idx], x, y);
+  }
+
   void put_channel_data(const linear_channel& channel, std::span<const float> newdata);
   std::span<float> get_channel_data(const linear_channel& channel);
 
@@ -71,7 +95,7 @@ struct image: noncopyable {
   std::vector<unsigned char> data_to_u8() const;
 };
 
-[[nodiscard]] image naive_filter(const image& spectral, const image& gbuffer);
+[[nodiscard]] image naive_filter(image& gbuffer);
 
 struct filter_streams {
   std::span<float> dst;
