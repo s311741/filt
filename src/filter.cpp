@@ -1,6 +1,5 @@
 #include "image.hpp"
 #include "util.hpp"
-#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -10,6 +9,12 @@
 #include <oneapi/tbb/parallel_for_each.h>
 #include <sched.h>
 #include <span>
+
+#if 1
+#define unroll _Pragma("unroll")
+#else
+#define unroll
+#endif
 
 namespace filt {
 
@@ -82,21 +87,18 @@ image naive_filter(image& gbuf) {
                    gbuf.sample(b, x, y) };
   };
 
-  for (int x = radius; x < meta.width - radius; ++x) {
-    for (int y = radius; y < meta.height - radius; ++y) {
+  for (int y = radius; y < meta.height - radius; ++y) {
+    for (int x = radius; x < meta.width - radius; ++x) {
       float3 zorigin = get_z(x, y);
       float3 norigin = get_normal(x, y);
       float3 value = zorigin;
       float3 weight {1.f, 1.f, 1.f};
 
-      #pragma unroll
-      for (int direction = 0; direction < 4; ++direction) {
+      unroll for (int direction = 0; direction < 4; ++direction) {
         float3 nprev = norigin;
         float ndotprev;
-        #pragma unroll
-        for (int i = 1; i <= radius; ++i) {
-          #pragma unroll
-          for (int j = -i; j < i; ++j) {
+        unroll for (int i = 1; i <= radius; ++i) {
+          unroll for (int j = -i; j < i; ++j) {
             auto [dx, dy] = rotate_ij(direction, i, j);
             int xx = x + dx;
             int yy = y + dy;
@@ -113,9 +115,9 @@ image naive_filter(image& gbuf) {
               (i*i + j*j) * (-1.f / (1 + 2 + radius)));
 
             float3 zhere = get_z(xx, yy);
-            for (int k = 0; k < 3; ++k) {
-              float idiff = zhere[i] - zorigin[i];
-              float gintensity = std::exp(idiff * idiff * (-1.f / 25.f));
+            unroll for (int k = 0; k < 3; ++k) {
+              float id = zhere[i] - zorigin[i];
+              float gintensity = std::exp(id * id * (-1.f / 25.f));
               float factor = gdist * gintensity;
               value[k] += zhere[k] * factor;
               weight[k] += factor;
@@ -131,7 +133,7 @@ image naive_filter(image& gbuf) {
       }
 
       float3 alb = get_albedo(x, y);
-      for (int i = 0; i < 3; ++i) {
+      _Pragma("unroll") for (int i = 0; i < 3; ++i) {
         float final = alb[i] * value[i] / weight[i];
         result.data[result.meta.channels[i].offset_elems(x, y)] = final;
       }
@@ -157,27 +159,8 @@ static constexpr float approx_exp1(float x) {
   return std::bit_cast<float>(static_cast<uint32_t>(x));
 }
 
-[[maybe_unused]] static constexpr float approx_exp_line(float x) {
-  return std::max(0.f, 1.f + 0.3f * x);
-}
-
-using short_normal = std::array<int8_t, 3>;
-
-[[maybe_unused]] constexpr static float dot(const short_normal& a, const short_normal& b) {
-  float result = 0.f;
-  for (int i = 0; i < 3; ++i) {
-    auto w = a[i] * b[i];
-    result += 1.f/(127.f * 127.f) * w;
-  }
-  return result;
-}
-
-static int shift_origin(int origin, int width, int dx, int dy) {
-  return origin + dy * width + dx;
-}
-
 void linear_filter(image_meta& meta, filter_streams s) {
-  int total_pixels = meta.total_pixels();
+  const int total_pixels = meta.total_pixels();
   assert_release(std::ssize(s.dst) == 3 * total_pixels);
   assert_release(std::ssize(s.color) == 3 * total_pixels);
   assert_release(std::ssize(s.albedo) == 3 * total_pixels);
@@ -186,10 +169,12 @@ void linear_filter(image_meta& meta, filter_streams s) {
 
   const int width = meta.width;
 
-  float* __restrict z = s.z.data();
-  float* __restrict out = s.dst.data();
-  const float* __restrict normals = s.normals.data();
-  const float* __restrict albedo = s.albedo.data();
+#define RESTRICT __restrict
+// #define RESTRICT
+  float* RESTRICT z = s.z.data();
+  float* RESTRICT out = s.dst.data();
+  const float* RESTRICT normals = s.normals.data();
+  const float* RESTRICT albedo = s.albedo.data();
 
   auto get_z = [&](int at) -> float3 {
     float3 result;
@@ -213,21 +198,21 @@ void linear_filter(image_meta& meta, filter_streams s) {
     z[i] = s.color[i] / albedo[i];
   }
 
-  int redzone = radius * (width + 1);
+  const int redzone = radius * (width + 1);
   for (int origin = redzone; origin < total_pixels - redzone; ++origin) {
     float3 zorigin = get_z(origin);
     float3 norigin = get_normal(origin);
     float3 value = zorigin;
     float3 weight {1.f, 1.f, 1.f};
 
-    _Pragma("unroll") for (int direction = 0; direction < 4; ++direction) {
+    unroll for (int direction = 0; direction < 4; ++direction) {
       float3 nprev = norigin;
       float ndotprev;
 
-      _Pragma("unroll") for (int i = 1; i <= radius; ++i) {
-        _Pragma("unroll") for (int j = -i; j < +i; ++j) {
+      unroll for (int i = 1; i <= radius; ++i) {
+        unroll for (int j = -i; j < +i; ++j) {
           auto [dx, dy] = rotate_ij(direction, i, j);
-          int offset = shift_origin(origin, width, dx, dy);
+          int offset = origin + dy * width + dx;
 
           float3 nhere = get_normal(offset);
 
@@ -242,7 +227,7 @@ void linear_filter(image_meta& meta, filter_streams s) {
 
           float3 zhere = get_z(offset);
 
-          for (int k = 0; k < 3; ++k) {
+          unroll for (int k = 0; k < 3; ++k) {
             float id = (zhere[k] - zorigin[k]);
             float gintensity = approx_exp1(id * id * (-1.f / 25.f));
             float factor = gdist * gintensity;

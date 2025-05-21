@@ -2,6 +2,7 @@
 #include "mempool.hpp"
 #include "util.hpp"
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <fmt/base.h>
@@ -13,6 +14,39 @@
 #include <sched.h>
 #include <string_view>
 #include <unistd.h>
+
+
+using dmicroseconds = std::chrono::duration<double, std::micro>;
+
+struct interval_timer {
+  using clock = std::chrono::steady_clock;
+  clock::time_point time_started = clock::now();
+
+  dmicroseconds elapsed() const {
+    return std::chrono::duration_cast<dmicroseconds>(clock::now() - time_started);
+  }
+
+  void report(filt::image_meta meta) const {
+    auto dt = elapsed();
+    double mps = meta.total_pixels() / dt.count();
+    fmt::println(
+      "{}×{}\t{:.3f},",
+      meta.width, meta.height, mps);
+  }
+};
+
+
+static void deinterleave3(std::span<float> dst, std::span<const float> src) {
+  assert_release(dst.size() == src.size());
+  const int size = std::ssize(dst);
+  assert_release(size % 3 == 0);
+  const int nsize = size/3;
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < nsize; ++j) {
+      dst[j + nsize*i] = src[3*j + i];
+    }
+  }
+}
 
 [[maybe_unused]]
 static void remove_non_rgb_channels(filt::image_meta& meta) {
@@ -42,11 +76,8 @@ int main(int argc, char** argv) try {
   {
     auto timer = interval_timer();
     auto result = filt::naive_filter(gbuf);
-    auto dt = timer.elapsed();
-    log_out(
-      "{:.3f}us & {:.3f} Mp/s",
-      dt.count(), gbuf.meta.total_pixels() / dt.count());
-    result.dump_png_rgb("out/naive.png");
+    timer.report(gbuf.meta);
+    // result.dump_png_rgb("out/naive.png");
     return 0;
   }
 #endif
@@ -76,11 +107,11 @@ int main(int argc, char** argv) try {
   auto dst_mem = pool.allocate<float>(192, 3 * gbuf.meta.total_pixels());
   auto z_mem = pool.allocate<float>(0, 3 * gbuf.meta.total_pixels());
 
-  auto result_image = filt::image(gbuf.meta);
-  auto z_image = filt::image(gbuf.meta);
-  auto zf_image = filt::image(gbuf.meta);
+  auto in_image = filt::image::make_rgb(gbuf.meta.width, gbuf.meta.height);
+  auto out_image = filt::image::make_rgb(gbuf.meta.width, gbuf.meta.height);
 
-  for (int i = 0; i < 10; ++i) {
+  // for (int i = 0; i < 10; ++i)
+  {
     auto timer = interval_timer();
     filt::linear_filter(gbuf.meta, filt::filter_streams{
       .dst = dst_mem,
@@ -89,8 +120,14 @@ int main(int argc, char** argv) try {
       .normals = normal_mem,
       .z = z_mem,
     });
-    timer.report(gbuf.meta.total_pixels());
+    timer.report(gbuf.meta);
   }
+
+  deinterleave3(in_image.data, color_mem);
+  deinterleave3(out_image.data, dst_mem);
+
+  in_image.dump_png_rgb("out/in.png");
+  out_image.dump_png_rgb("out/out.png");
 
 } catch (const std::exception& ex) {
   fmt::print(

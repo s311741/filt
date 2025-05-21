@@ -78,6 +78,8 @@ struct image: noncopyable {
     data(meta.storage_size())
   {}
 
+  static image make_rgb(int width, int height);
+
   float sample(const linear_channel& channel, int x, int y) const {
     return data[channel.offset_elems(x, y)];
   }

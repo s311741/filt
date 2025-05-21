@@ -176,6 +176,25 @@ image::image(const char* exr_filename):
   image(exr_filename, [](std::string_view) { return true; })
 {}
 
+image image::make_rgb(int width, int height) {
+  image_meta meta;
+  meta.width = width;
+  meta.height = height;
+  const int stride_x = sizeof(float);
+  const int stride_y = stride_x * meta.width;
+  for (int i = 0; i < 3; ++i) {
+    const char name[2] = {"RGB"[i], '\0'};
+    meta.channels.push_back(linear_channel{
+      .name = name,
+      .elem_width_bytes = sizeof(float),
+      .base_offset_bytes = i * int(sizeof(float)) * meta.total_pixels(),
+      .stride_x_bytes = stride_x,
+      .stride_y_bytes = stride_y,
+    });
+  }
+  return image(std::move(meta));
+}
+
 void image::put_channel_data(const linear_channel& channel, std::span<const float> newdata) {
   assert_release(channel.stride_x_elems() == 1);
   assert_release(channel.stride_y_elems() == meta.width);

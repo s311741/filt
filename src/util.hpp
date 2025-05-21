@@ -1,5 +1,4 @@
 #pragma once
-#include <chrono>
 #include <fmt/base.h>
 #include <fmt/color.h>
 #include <fmt/format.h>
@@ -23,7 +22,7 @@ inline auto errno_error(const char* what) {
 
 template<typename... Args>
 void log_out(fmt::format_string<Args...> format, Args&&... args) {
-#if 1
+#if 0
   fmt::println(stderr, format, std::forward<Args>(args)...);
 #else
   (void) format;
@@ -45,24 +44,6 @@ struct nonmovable {
   nonmovable& operator=(const nonmovable&) = delete;
   nonmovable(nonmovable&&) = delete;
   nonmovable& operator=(nonmovable&&) = delete;
-};
-
-using dmicroseconds = std::chrono::duration<double, std::micro>;
-
-struct interval_timer {
-  using clock = std::chrono::steady_clock;
-  clock::time_point time_started = clock::now();
-
-  dmicroseconds elapsed() const {
-    return std::chrono::duration_cast<dmicroseconds>(clock::now() - time_started);
-  }
-
-  void report(int total_pixels) const {
-    auto dt = elapsed();
-    fmt::print(
-      "{:.3f}us & {:.3f} Mp/s\n",
-      dt.count(), total_pixels / dt.count());
-  }
 };
 
 template<typename T>
